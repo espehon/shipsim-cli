@@ -96,6 +96,29 @@ def get_carriers() -> list:
     return carriers
 
 
+def shipsim(from_zip: str, to_zip: str, pkg_weights: list) -> list:
+    """
+    Main function to calculate shipping rates.
+    Args:
+        from_zip (str): The ZIP code of the sender.
+        to_zip (str): The ZIP code of the recipient.
+        pkg_weights (list): List of package weights.
+    """
+    carriers = get_carriers()
+    if not carriers:
+        folder_sys_help()
+        sys.exit(0)
+
+    output = []
+
+    for carrier in carriers:
+        zones_map = pd.read_csv(os.path.join(settings["carriers_folder"], carrier, "ZoneMap.csv"))
+        rate_card = pd.read_csv(os.path.join(settings["carriers_folder"], carrier, "RateCard.csv"))
+        for pkg in pkg_weights:
+            pass # todo
+            
+            
+
 
 
 
