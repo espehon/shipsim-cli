@@ -45,7 +45,6 @@ if len(os.listdir(settings["carriers_folder"])) == 0:
     print("\nNo carriers found in the carriers folder. Please add some carriers to the following:")
     print(settings["carriers_folder"])
     print("\nTry 'shipsim --help' for more info.")
-    sys.exit(0)
 
 
 
@@ -148,10 +147,13 @@ def shipsim(requests: list) -> pd.DataFrame:
     if not carriers:
         folder_sys_help()
         sys.exit(0)
-    selected_carriers = questionary.checkbox(
+    if len(carriers) == 1:
+        selected_carriers = carriers
+    else:
+        selected_carriers = questionary.checkbox(
         "Select carriers to use:",
         choices=carriers
-    ).ask()
+        ).ask()
     if not selected_carriers:
         print("Using all carriers.")
         selected_carriers = carriers
