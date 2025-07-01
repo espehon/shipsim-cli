@@ -21,6 +21,11 @@ import questionary
 #region Setup
 
 
+try:
+    __version__ = f"tasky {importlib.metadata.version('tasky_cli')} from tasky_cli"
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "Package not installed..."
+
 # Set settings file
 settings_file = os.path.expanduser("~/.config/shipsim/settings.json").replace("\\", "/")
 if os.path.exists(settings_file):
@@ -44,7 +49,7 @@ if os.path.exists(settings["carriers_folder"]) == False:
 if len(os.listdir(settings["carriers_folder"])) == 0:
     print("\nNo carriers found in the carriers folder. Please add some carriers to the following:")
     print(settings["carriers_folder"])
-    print("\nTry 'shipsim --help' for more info.")
+    print("\nTry 'shipsim --folder' for more info.\n")
 
 
 
@@ -60,6 +65,9 @@ parser = argparse.ArgumentParser(
 )
 
 parser.add_argument('-?', '--help', action='help', help='Show this help message and exit.')
+parser.add_argument('-v', '--version', action='version', version=__version__, help='Show the version of shipsim-cli and exit.')
+parser.add_argument('-c', '--carriers', action='store_true', help='List available carriers.')
+parser.add_argument('-f', '--folder', action='store_true', help='Show the carrier folder and example structure.')
 parser.add_argument('shipment_info', nargs=argparse.REMAINDER, help='<FromID> <ToZip> <PkgWeight>')
 
 
@@ -74,7 +82,7 @@ def folder_sys_help():
     print("Each carrier should be a folder named after the carrier.")
     print("Inside each carrier folder, there should be a ZoneMap.csv and a RateCard.csv file.")
     print("Optionally, you can also add Misc.json for additional information like accessorials.")
-    print("""\nExample:
+    print("""\nFile structure example:
     shipsim/
         ├── UPS/
         │   ├── ZoneMap.csv
@@ -82,7 +90,29 @@ def folder_sys_help():
         │   └── Misc.json
         └── FedEx/
             ├── ZoneMap.csv
-            └── RateCard.csv\n""")
+            └── RateCard.csv
+
+Exqample ZoneMap.csv:
+    Origin,ShipToZip3,Standard,Express
+    1,100,1,11
+    1,200,2,12
+    2,100,2,12
+    2,200,1,11
+
+Exqample RateCard.csv:
+    Weight,1,2,3,4,11,12,13,14
+    1,1.25,2.25,3.25,4.25,6.35,7.25,8.25,9.25
+    2,2.50,3.50,4.50,5.50,7.75,8.75,9.75,10.75
+    3,3.75,4.75,5.75,6.75,9.15,10.25,11.25,12.25
+    4,4.00,5.00,6.00,7.00,9.50,10.50,11.50,12.50
+    5,5.00,6.00,7.00,8.00,10.50,11.50,12.50,13.50
+
+Exqample Misc.json:
+    {
+        "accessorials": 0.10
+    }
+
+""")
 
 
 def get_carriers() -> list:
@@ -145,7 +175,8 @@ def shipsim(requests: list) -> pd.DataFrame:
     # Ask user to select carriers
     carriers = get_carriers()
     if not carriers:
-        folder_sys_help()
+        print("No carriers found in the carriers folder.")
+        print("Try 'shipsim --folder' for more info.")
         sys.exit(0)
     if len(carriers) == 1:
         selected_carriers = carriers
@@ -257,15 +288,49 @@ def shipsim(requests: list) -> pd.DataFrame:
 
 
 def cli(argv=None):
-    "shipsim 90001 10036 19.69"
+    "shipsim 1 10036 19.69"
     args = parser.parse_args(argv)
-    packages = args.shipment_info[2:]
-    payload =[]
-    for package in packages:
-        payload.append((args.shipment_info[0], args.shipment_info[1], float(package)))
 
-    df = shipsim(payload)
-    print(df.head(20))
+    if args.folder:
+        folder_sys_help()
+    elif args.carriers:
+        carriers = get_carriers()
+        if not carriers:
+            sys.exit(1)
+        else:
+            print("Available carriers:")
+            for carrier in carriers:
+                print(f"    {carrier}")
+    elif len(args.shipment_info) < 3:
+        print("Not enough arguments provided.")
+        print("Usage: shipsim <FromID> <ToZip> <PkgWeight1> [<PkgWeight2> ...]")
+        sys.exit(1)
+    else:
+        packages = args.shipment_info[2:]
+        payload =[]
+        for package in packages:
+            payload.append((args.shipment_info[0], args.shipment_info[1], float(package)))
+        df = shipsim(payload)
+        print(df.head(10))
+
+        if len(df) == 0:
+            print("No rates found for the given shipment information.")
+            sys.exit(0)
+        elif len(df) > 10:
+            user = questionary.confirm(
+                "More than 10 results found. Do you want to save to CSV? (Y/n)",
+                default=True
+            )
+            if user:
+                file_path = questionary.text(
+                    "Enter filename to save (without extension):",
+                    default="~/Downloads/shipsim_results"
+                ).ask()
+                df.to_csv(os.path.expanduser(file_path + ".csv"), index=False)
+                print(f"\n√ Results saved to {file_path}.csv\n")
+    
+
+
 
 
 
