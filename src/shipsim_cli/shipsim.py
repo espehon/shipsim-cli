@@ -14,7 +14,7 @@ import importlib.metadata
 
 import pandas as pd
 import questionary
-
+from halo import Halo
 
 
 #endregion Imports
@@ -25,6 +25,9 @@ try:
     __version__ = f"tasky {importlib.metadata.version('tasky_cli')} from tasky_cli"
 except importlib.metadata.PackageNotFoundError:
     __version__ = "Package not installed..."
+
+# halo spinner
+
 
 # Set settings file
 settings_file = os.path.expanduser("~/.config/shipsim/settings.json").replace("\\", "/")
