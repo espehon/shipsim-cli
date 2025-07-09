@@ -14,6 +14,7 @@ requires-python = ">=3.8"
 dependencies = [
 	"pandas >= 2.3.0",
 	"questionary >= 2.1.0",
+ "halo >= 0.0.31"
 ]
 classifiers = [
 	"Programming Language :: Python :: 3",
