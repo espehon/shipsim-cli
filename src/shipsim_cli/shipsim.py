@@ -298,8 +298,9 @@ def interactive_mode():
     It also provides options to plot the simulation results.
     The input file can be a CSV or Excel file with the necessary data.
     """
-    import seaborn as sns
     import matplotlib.pyplot as plt
+
+    import seaborn as sns
     from halo import Halo
 
     spinner = Halo(text='Loading data', spinner='dots')
@@ -339,7 +340,7 @@ def interactive_mode():
         print("Exiting.")
         sys.exit(0)
     
-    print("Running simulation...")
+    print("\nRunning simulation...")
 
     sim = shipsim(df)
 
@@ -382,13 +383,17 @@ def interactive_mode():
 
     while plot_loop:
         for n in [1]:
+            options = [col for col in sim.columns]
+            options.append("None")
             x_axis = questionary.select(
                 "Select the x-axis variable for the plot",
-                choices=[col for col in sim.columns]
+                choices=options
             ).ask()
-            if x_axis is None:
-                print("No x-axis variable selected.")
-                break
+            if x_axis == "None":
+                x_axis = None
+            # if x_axis is None:
+            #     print("No x-axis variable selected.")
+            #     break
             y_axis = questionary.select(
                 "Select the y-axis variable for the plot",
                 choices= list(sim.select_dtypes(include=['number']).columns)
@@ -396,14 +401,19 @@ def interactive_mode():
             if y_axis is None:
                 print("No y-axis variable selected.")
                 break
+            options = list(sim.select_dtypes(include=['object', 'category']).columns)
+            options.append("None")
             hue_category = questionary.select(
                 "Select the hue category for the plot (Optional)",
-                choices= list(sim.select_dtypes(include=['object', 'category']).columns)
+                choices= options,
+                default="None"
             ).ask()
+            if hue_category == "None":
+                hue_category = None
 
             chart_type = questionary.select(
                 "Select the type of chart to plot",
-                choices=["Box Plot", "Violin Plot"],
+                choices=["Box Plot", "Violin Plot", "Joint Grid"],
                 default="Box Plot"
             ).ask()
             if chart_type is None:
@@ -413,15 +423,19 @@ def interactive_mode():
             try:
                 spinner.start("Plotting simulation results")
                 if chart_type == "Box Plot":
-                    if hue_category is None:
-                        sns.boxplot(x=x_axis, y=y_axis, data=sim)
-                    else:
-                        sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                    sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+
                 elif chart_type == "Violin Plot":
-                    if hue_category is None:
-                        sns.violinplot(x=x_axis, y=y_axis, data=sim)
-                    else:
-                        sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                    sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+
+                elif chart_type == "Joint Grid":
+                    if x_axis is None or y_axis is None:
+                        spinner.fail("Joint Grid requires both x and y axes to be selected.")
+                        break
+                    g = sns.jointplot(x=x_axis, y=y_axis, data=sim, marginal_ticks=True, kind="hist")
+                    g.plot_joint(sns.histplot, cmap=sns.dark_palette("#69d", reverse=True, as_cmap=True), cbar=True)
+                    g.plot_marginals(sns.histplot, element="step")
+
                 spinner.succeed()
                 print("(Close the plot window to continue.)")
                 plt.show()
