@@ -14,7 +14,7 @@ import importlib.metadata
 
 import pandas as pd
 import questionary
-from halo import Halo
+
 
 
 #endregion Imports
@@ -56,7 +56,7 @@ if len(os.listdir(settings["carriers_folder"])) == 0:
 
 
 
-
+usage_string = "Usage: shipsim <FromID> <ToZip> <PkgWeight1> [<PkgWeight2> ...]"
 
 # Set Argparse
 parser = argparse.ArgumentParser(
@@ -64,11 +64,12 @@ parser = argparse.ArgumentParser(
     epilog="TODO",
     allow_abbrev=False,
     add_help=False,
-    usage="shipsim <FromZip> <ToZip> <PkgWeight1> [<PkgWeight2> ...]",
+    usage=usage_string
 )
 
 parser.add_argument('-?', '--help', action='help', help='Show this help message and exit.')
 parser.add_argument('-v', '--version', action='version', version=__version__, help='Show the version of shipsim-cli and exit.')
+parser.add_argument('-i', '--interactive', action='store_true', help='Run in interactive mode.')
 parser.add_argument('-c', '--carriers', action='store_true', help='List available carriers.')
 parser.add_argument('-f', '--folder', action='store_true', help='Show the carrier folder and example structure.')
 parser.add_argument('shipment_info', nargs=argparse.REMAINDER, help='<FromID> <ToZip> <PkgWeight>')
@@ -154,7 +155,7 @@ def pick_column(prompt, default_names, columns):
         ).ask()
 
 
-def shipsim(requests: list) -> pd.DataFrame:
+def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
     """
     Flexible shipping rate calculator.
     requests: list of dicts or DataFrame, must include 'from_id', 'to_zip', 'pkg_weight'.
@@ -290,12 +291,157 @@ def shipsim(requests: list) -> pd.DataFrame:
     return output_df
 
 
+def interactive_mode():
+    """
+    Run the simulation in interactive mode.
+    This mode allows the user to select an input file and save the output.
+    It also provides options to plot the simulation results.
+    The input file can be a CSV or Excel file with the necessary data.
+    """
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    from halo import Halo
+
+    spinner = Halo(text='Loading data', spinner='dots')
+
+    # get list of xlsx files in the current directory
+    available_files = [f for f in os.listdir('.') if f.endswith('.csv') or f.endswith('.xlsx')]
+
+    if not available_files:
+        print("No csv or xlsx files found in the current directory. Please add a file with the necessary data.")
+        sys.exit(0)
+
+    # input file selection
+    input_file = questionary.select(
+        "Select an input file",
+        available_files,
+        default=None
+    ).ask()
+
+    if input_file is None:
+        print("No input file selected. Exiting.")
+        sys.exit(0)
+
+    spinner.start()
+    if input_file.endswith('.csv'):
+        df = pd.read_csv(input_file)
+    elif input_file.endswith('.xlsx'):
+        df = pd.read_excel(input_file)
+    spinner.succeed()
+
+    print(df.dtypes)
+    print(df.shape)
+
+    if not questionary.confirm(
+        "Do you want to continue with this data?",
+        default=True
+    ).ask():
+        print("Exiting.")
+        sys.exit(0)
+    
+    print("Running simulation...")
+
+    sim = shipsim(df)
+
+    if questionary.confirm("Do you want to save the simulation results?",
+        default=True
+        ).ask():
+        output_file = questionary.text(
+            "Enter the output file name (without extension):",
+            default= f"{input_file.split('.')[0]}_out"
+        ).ask()
+
+        if output_file is None or output_file.strip() == '':
+            print("No output file name provided. Exiting.")
+            sys.exit(0)
+
+        extension = questionary.select(
+            "Select the output file format",
+            choices=["CSV", "Excel"],
+        ).ask()
+
+    
+        if extension == "CSV":
+            output_file += '.csv'
+        elif extension == "Excel":
+            output_file += '.xlsx'
+        else:
+            print("Invalid file format selected. Exiting.")
+            sys.exit(1)
+
+        spinner.start("Saving simulation results")
+        if extension == "CSV":
+            sim.to_csv(output_file, index=False)
+        elif extension == "Excel":
+            sim.to_excel(output_file, index=False)
+        spinner.succeed()
+
+    plot_loop = questionary.confirm("Do you want to plot the simulation results?",
+        default= False
+        ).ask()
+
+    while plot_loop:
+        for n in [1]:
+            x_axis = questionary.select(
+                "Select the x-axis variable for the plot",
+                choices=[col for col in sim.columns]
+            ).ask()
+            if x_axis is None:
+                print("No x-axis variable selected.")
+                break
+            y_axis = questionary.select(
+                "Select the y-axis variable for the plot",
+                choices= list(sim.select_dtypes(include=['number']).columns)
+            ).ask()
+            if y_axis is None:
+                print("No y-axis variable selected.")
+                break
+            hue_category = questionary.select(
+                "Select the hue category for the plot (Optional)",
+                choices= list(sim.select_dtypes(include=['object', 'category']).columns)
+            ).ask()
+
+            chart_type = questionary.select(
+                "Select the type of chart to plot",
+                choices=["Box Plot", "Violin Plot"],
+                default="Box Plot"
+            ).ask()
+            if chart_type is None:
+                print("No chart type selected.")
+                break
+
+            try:
+                spinner.start("Plotting simulation results")
+                if chart_type == "Box Plot":
+                    if hue_category is None:
+                        sns.boxplot(x=x_axis, y=y_axis, data=sim)
+                    else:
+                        sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                elif chart_type == "Violin Plot":
+                    if hue_category is None:
+                        sns.violinplot(x=x_axis, y=y_axis, data=sim)
+                    else:
+                        sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                spinner.succeed()
+                print("(Close the plot window to continue.)")
+                plt.show()
+            except Exception as e:
+                spinner.fail(f"Error :(")
+                print(f"Error plotting results: {e}")
+        plot_loop = questionary.confirm(
+            "Do you want to plot again?",
+            default=True
+        ).ask()
+
+
 def cli(argv=None):
     "shipsim 1 10036 19.69"
     args = parser.parse_args(argv)
 
     if args.folder:
         folder_sys_help()
+    elif args.interactive:
+        interactive_mode()
     elif args.carriers:
         carriers = get_carriers()
         if not carriers:
@@ -306,7 +452,7 @@ def cli(argv=None):
                 print(f"    {carrier}")
     elif len(args.shipment_info) < 3:
         print("Not enough arguments provided.")
-        print("Usage: shipsim <FromID> <ToZip> <PkgWeight1> [<PkgWeight2> ...]")
+        print(usage_string)
         sys.exit(1)
     else:
         packages = args.shipment_info[2:]
