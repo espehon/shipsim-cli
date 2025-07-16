@@ -118,6 +118,11 @@ Exqample Misc.json:
 """)
 
 
+def is_categorical(series) -> bool:
+    # Check if a pandas Series is categorical or object type.
+    return str(series.dtype) in ("object", "category")
+
+
 def get_carriers() -> list:
     """
     Get a list of carriers from the carriers folder.
@@ -446,7 +451,11 @@ def interactive_mode():
                     if x_axis is None or y_axis is None:
                         spinner.fail("Joint Grid requires both x and y axes to be selected.")
                         break
-                    g = sns.jointplot(x=x_axis, y=y_axis, data=sim, marginal_ticks=True, kind="hist")
+                    x_is_cat = is_categorical(sim[x_axis]) if x_axis is not None else False
+                    y_is_cat = is_categorical(sim[y_axis]) if y_axis is not None else False
+                    discrete_tuple = (x_is_cat, y_is_cat)
+
+                    g = sns.jointplot(x=x_axis, y=y_axis, data=sim, marginal_ticks=True, kind="hist", discrete=discrete_tuple)
                     g.plot_joint(sns.histplot, cmap=sns.dark_palette("#69d", reverse=True, as_cmap=True), cbar=True)
                     g.plot_marginals(sns.histplot, element="step")
 
