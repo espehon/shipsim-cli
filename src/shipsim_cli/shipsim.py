@@ -22,11 +22,9 @@ import questionary
 
 
 try:
-    __version__ = f"tasky {importlib.metadata.version('tasky_cli')} from tasky_cli"
+    __version__ = f"shipsim {importlib.metadata.version('shipsim_cli')} from shipsim_cli"
 except importlib.metadata.PackageNotFoundError:
     __version__ = "Package not installed..."
-
-# halo spinner
 
 
 # Set settings file
@@ -55,8 +53,9 @@ if len(os.listdir(settings["carriers_folder"])) == 0:
     print("\nTry 'shipsim --folder' for more info.\n")
 
 
+USAGE_STR = "Usage: shipsim <FromID> <ToZip> <PkgWeight1> [<PkgWeight2> ...]    (try 'shipsim -?')"
 
-usage_string = "Usage: shipsim <FromID> <ToZip> <PkgWeight1> [<PkgWeight2> ...]"
+EXCEL_ROW_LIMIT = 1_048_575
 
 # Set Argparse
 parser = argparse.ArgumentParser(
@@ -64,7 +63,7 @@ parser = argparse.ArgumentParser(
     epilog="TODO",
     allow_abbrev=False,
     add_help=False,
-    usage=usage_string
+    usage=USAGE_STR
 )
 
 parser.add_argument('-?', '--help', action='help', help='Show this help message and exit.')
@@ -355,11 +354,16 @@ def interactive_mode():
         if output_file is None or output_file.strip() == '':
             print("No output file name provided. Exiting.")
             sys.exit(0)
-
-        extension = questionary.select(
-            "Select the output file format",
-            choices=["CSV", "Excel"],
-        ).ask()
+        
+        if len(sim) > EXCEL_ROW_LIMIT:
+            print(f"Warning: The output DataFrame has {len(sim)} rows, which exceeds the Excel row limit of {EXCEL_ROW_LIMIT}.")
+            print("Saving as CSV.")
+            extension = "CSV"
+        else:
+            extension = questionary.select(
+                "Select the output file format",
+                choices=["CSV", "Excel"],
+            ).ask()
 
     
         if extension == "CSV":
@@ -466,7 +470,7 @@ def cli(argv=None):
                 print(f"    {carrier}")
     elif len(args.shipment_info) < 3:
         print("Not enough arguments provided.")
-        print(usage_string)
+        print(USAGE_STR)
         sys.exit(1)
     else:
         packages = args.shipment_info[2:]
