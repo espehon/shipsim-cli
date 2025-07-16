@@ -172,8 +172,17 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
     columns = list(df_in.columns)
 
     from_col = pick_column("Origin ID (from_id)", ["from_id", "fromid", "origin", "origin_id"], columns)
+    if from_col is None:
+        print("No column selected. Exiting.")
+        sys.exit(0)
     to_col = pick_column("Destination ZIP (to_zip)", ["to_zip", "tozip", "dest_zip", "destination", "destination_zip"], columns)
+    if to_col is None:
+        print("No column selected. Exiting.")
+        sys.exit(0)
     weight_col = pick_column("Package Weight (pkg_weight)", ["pkg_weight", "weight", "pkgweight", "package_weight"], columns)
+    if weight_col is None:
+        print("No column selected. Exiting.")
+        sys.exit(0)
 
     # Ask user to select carriers
     carriers = get_carriers()
@@ -231,7 +240,8 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
         if len(shipping_methods) > 1:
             method = questionary.select(
                 f"Select shipping method for {carrier}:",
-                choices=shipping_methods
+                choices=shipping_methods,
+                default=shipping_methods[0]
             ).ask()
         else:
             method = shipping_methods[0]
