@@ -13,6 +13,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
 	"pandas >= 2.3.0",
+	"openpyxl >= 3.1.0",
 	"questionary >= 2.1.0",
     "halo >= 0.0.31",
 	"seaborn >= 0.13.2"
