@@ -211,6 +211,8 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
     carrier_zonemaps = {}
     carrier_ratecards = {}
     carrier_accessorials = {}
+    carrier_addons = ()
+    
     for carrier in selected_carriers:
         zones_map = pd.read_csv(
             os.path.join(settings["carriers_folder"], carrier, "ZoneMap.csv"),
