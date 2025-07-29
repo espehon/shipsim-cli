@@ -112,7 +112,8 @@ Exqample RateCard.csv:
 
 Exqample Misc.json:
     {
-        "accessorials": 0.10
+        "accessorials": 0.10,
+        "addons": 5.00
     }
 
 """)
@@ -229,15 +230,22 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
         # Check for Misc.json and accessorials
         misc_path = os.path.join(settings["carriers_folder"], carrier, "Misc.json")
         accessorial = None
+        addons = None
         if os.path.exists(misc_path):
             with open(misc_path, "r") as f:
                 misc = json.load(f)
                 accessorial = misc.get("accessorials", None)
+                addons = misc.get("addons", None)
                 if accessorial is not None:
                     try:
                         accessorial = float(accessorial)
                     except Exception:
                         accessorial = None
+                if addons is not None:
+                    try:
+                        addons = float(addons)
+                    except Exception:
+                        addons = None
         carrier_accessorials[carrier] = accessorial
 
         shipping_methods = list(zones_map.columns[2:])
@@ -288,17 +296,26 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
 
             # --- Accessorial calculation ---
             if accessorial is not None:
-                freight = round(freight * (1 + accessorial), 2)
-                accessorial_flag = "Yes"
+                accessorial_value = freight * accessorial
+                freight += accessorial_value
             else:
-                accessorial_flag = "No"
+                accessorial_value = 0.0
+            
+            # --- Addons ---
+            if addons is not None:
+                freight += addons
+            else:
+                addons = 0.0
+            
+            
 
             result_row = row_in.to_dict()  # Copy all user columns
             result_row.update({
                 "Carrier": carrier,
                 "Method": method,
                 "Freight": freight,
-                "Accessorial": accessorial_flag
+                "Accessorial": accessorial_value,
+                "Addons": addons
             })
             output.append(result_row)
 
