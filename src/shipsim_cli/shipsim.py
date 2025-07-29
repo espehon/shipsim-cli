@@ -176,6 +176,7 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
         df_in = requests.copy()
 
     columns = list(df_in.columns)
+    PASS_THROUGH_CARRIER = "PASS_THROUGH_CARRIER"
 
     from_col = pick_column("Origin ID (from_id)", ["from_id", "fromid", "origin", "origin_id"], columns)
     if from_col is None:
@@ -206,117 +207,154 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
     if not selected_carriers:
         print("Using all carriers.")
         selected_carriers = carriers
+    
+    # Ask if there is Freight value already in the DataFrame the should be passed through to the output
+    og_freight_col = None
+    if questionary.confirm(
+        "Is there a column with Freight values already in the DataFrame that should be passed through to the output?",
+        default=False
+    ).ask():
+        og_freight_col = questionary.select(
+            "Select the column with Freight values to pass through:",
+            choices=[col for col in columns if col != from_col and col != to_col and col != weight_col],
+            default=None
+        ).ask()
+        if og_freight_col is not None:
+            pass_through_name = questionary.text(
+                "Enter a name for the category that will represent the pass though Freight:",
+                default="Original Freight",
+                validate=lambda x: len(str(x).strip()) > 0,
+            ).ask()
+            if pass_through_name is not None and pass_through_name.strip() != '':
+                selected_carriers.append(PASS_THROUGH_CARRIER)
+
+
+
         
     # For each selected carrier, ask for shipping method if more than one
     carrier_methods = {}
     carrier_zonemaps = {}
     carrier_ratecards = {}
     carrier_accessorials = {}
-    carrier_addons = ()
+    carrier_addons = {}
     
     for carrier in selected_carriers:
-        zones_map = pd.read_csv(
-            os.path.join(settings["carriers_folder"], carrier, "ZoneMap.csv"),
-            dtype=str
-        )
-        rate_card = pd.read_csv(
-            os.path.join(settings["carriers_folder"], carrier, "RateCard.csv"),
-            dtype=str
-        )
-        rate_card['Weight'] = rate_card['Weight'].astype(float)
-        carrier_zonemaps[carrier] = zones_map
-        carrier_ratecards[carrier] = rate_card
+        if carrier != PASS_THROUGH_CARRIER:
+            zones_map = pd.read_csv(
+                os.path.join(settings["carriers_folder"], carrier, "ZoneMap.csv"),
+                dtype=str
+            )
+            rate_card = pd.read_csv(
+                os.path.join(settings["carriers_folder"], carrier, "RateCard.csv"),
+                dtype=str
+            )
+            rate_card['Weight'] = rate_card['Weight'].astype(float)
+            carrier_zonemaps[carrier] = zones_map
+            carrier_ratecards[carrier] = rate_card
 
-        # Check for Misc.json and accessorials
-        misc_path = os.path.join(settings["carriers_folder"], carrier, "Misc.json")
-        accessorial = None
-        addons = None
-        if os.path.exists(misc_path):
-            with open(misc_path, "r") as f:
-                misc = json.load(f)
-                accessorial = misc.get("accessorials", None)
-                addons = misc.get("addons", None)
-                if accessorial is not None:
-                    try:
-                        accessorial = float(accessorial)
-                    except Exception:
-                        accessorial = None
-                if addons is not None:
-                    try:
-                        addons = float(addons)
-                    except Exception:
-                        addons = None
-        carrier_accessorials[carrier] = accessorial
+            # Check for Misc.json and accessorials
+            misc_path = os.path.join(settings["carriers_folder"], carrier, "Misc.json")
+            accessorial = None
+            addons = None
+            if os.path.exists(misc_path):
+                with open(misc_path, "r") as f:
+                    misc = json.load(f)
+                    accessorial = misc.get("accessorials", None)
+                    addons = misc.get("addons", None)
+                    if accessorial is not None:
+                        try:
+                            accessorial = float(accessorial)
+                        except Exception:
+                            accessorial = None
+                    if addons is not None:
+                        try:
+                            addons = float(addons)
+                        except Exception:
+                            addons = None
+            carrier_accessorials[carrier] = accessorial
+            carrier_addons[carrier] = addons
 
-        shipping_methods = list(zones_map.columns[2:])
-        if not shipping_methods:
-            print(f"No shipping methods found in {carrier}'s ZoneMap.")
-            continue
-        if len(shipping_methods) > 1:
-            method = questionary.select(
-                f"Select shipping method for {carrier}:",
-                choices=shipping_methods,
-                default=shipping_methods[0]
-            ).ask()
-        else:
-            method = shipping_methods[0]
-        carrier_methods[carrier] = method
+            shipping_methods = list(zones_map.columns[2:])
+            if not shipping_methods:
+                print(f"No shipping methods found in {carrier}'s ZoneMap.")
+                continue
+            if len(shipping_methods) > 1:
+                method = questionary.select(
+                    f"Select shipping method for {carrier}:",
+                    choices=shipping_methods,
+                    default=shipping_methods[0]
+                ).ask()
+            else:
+                method = shipping_methods[0]
+            carrier_methods[carrier] = method
     output = []
     for idx, row_in in df_in.iterrows():
         from_id = row_in[from_col]
         to_zip = row_in[to_col]
         pkg = row_in[weight_col]
         for carrier in selected_carriers:
-            zones_map = carrier_zonemaps[carrier]
-            rate_card = carrier_ratecards[carrier]
-            method = carrier_methods[carrier]
-            accessorial = carrier_accessorials[carrier]
+            if carrier != PASS_THROUGH_CARRIER:
+                zones_map = carrier_zonemaps[carrier]
+                rate_card = carrier_ratecards[carrier]
+                method = carrier_methods[carrier]
+                accessorial = carrier_accessorials[carrier]
 
-            # --- Zone/method/rate lookup ---
-            match = zones_map.loc[
-                (zones_map['Origin'] == str(from_id)) &
-                (zones_map['ShipToZip3'] == str(to_zip)[:3])
-            ]
-            if match.empty or pd.isna(match.iloc[0][method]):
-                print(f"Origin ID {from_id} with ShipToZip3 {str(to_zip)[:3]} not found for {method} in {carrier}'s ZoneMap.")
-                continue
-            to_zone = match.iloc[0][method]
+                # --- Zone/method/rate lookup ---
+                match = zones_map.loc[
+                    (zones_map['Origin'] == str(from_id)) &
+                    (zones_map['ShipToZip3'] == str(to_zip)[:3])
+                ]
+                if match.empty or pd.isna(match.iloc[0][method]):
+                    print(f"Origin ID {from_id} with ShipToZip3 {str(to_zip)[:3]} not found for {method} in {carrier}'s ZoneMap.")
+                    continue
+                to_zone = match.iloc[0][method]
 
-            weights = rate_card['Weight'].values
-            larger_weights = weights[weights >= float(pkg)]
-            if larger_weights.size == 0:
-                print(f"No rate found for {pkg} lbs (over max weight) from zone {to_zone} in {carrier} ({method}).")
-                continue
-            selected_weight = larger_weights.min()
-            row = rate_card[rate_card['Weight'] == selected_weight]
-            if row.empty or to_zone not in row.columns:
-                print(f"No rate found for zone {to_zone} at weight {selected_weight} in {carrier} ({method}).")
-                continue
-            freight = float(row[to_zone].values[0])
+                weights = rate_card['Weight'].values
+                larger_weights = weights[weights >= float(pkg)]
+                if larger_weights.size == 0:
+                    print(f"No rate found for {pkg} lbs (over max weight) from zone {to_zone} in {carrier} ({method}).")
+                    continue
+                selected_weight = larger_weights.min()
+                row = rate_card[rate_card['Weight'] == selected_weight]
+                if row.empty or to_zone not in row.columns:
+                    print(f"No rate found for zone {to_zone} at weight {selected_weight} in {carrier} ({method}).")
+                    continue
+                freight = float(row[to_zone].values[0])
 
-            # --- Accessorial calculation ---
-            if accessorial is not None:
-                accessorial_value = freight * accessorial
-                freight += accessorial_value
-            else:
-                accessorial_value = 0.0
-            
-            # --- Addons ---
-            if addons is not None:
-                freight += addons
-            else:
-                addons = 0.0
+                # --- Accessorial calculation ---
+                if accessorial is not None:
+                    accessorial_value = freight * accessorial
+                    freight += accessorial_value
+                else:
+                    accessorial_value = 0.0
+                
+                # --- Addons ---
+                if addons is not None:
+                    freight += addons
+                else:
+                    addons = 0.0
             
             
 
             result_row = row_in.to_dict()  # Copy all user columns
-            result_row.update({
-                "Carrier": carrier,
-                "Method": method,
-                "Freight": freight,
-                "Accessorial": accessorial_value,
-                "Addons": addons
-            })
+            if carrier == PASS_THROUGH_CARRIER:
+                # If this is the pass through carrier, just copy the freight value
+                result_row.update({
+                    "Carrier": pass_through_name,
+                    "Method": "Source File",
+                    "Freight": row_in[og_freight_col] if og_freight_col else None,
+                    "Accessorial": 0.0,
+                    "Addons": 0.0
+                })
+            
+            else:
+                result_row.update({
+                    "Carrier": carrier,
+                    "Method": method,
+                    "Freight": freight,
+                    "Accessorial": accessorial_value,
+                    "Addons": addons
+                })
             output.append(result_row)
 
     output_df = pd.DataFrame(output)
