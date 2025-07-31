@@ -455,15 +455,20 @@ def interactive_mode():
         default= False
         ).ask()
     
+    clean_dataframe_mode = False
+    sim_clean = None
+    
     supported_plot_types = {
         "Box Plot": False,
         "Violin Plot": False,
         "Joint Grid": False,
-        "Carrier Comparison (Binned Line)": True # Requires specific columns
+        "Carrier Comparison (Binned Line)": True, # Requires specific columns
+        "[Switch Clean DataFrame Mode]": None # Change Zeros to NaNs and remove outliers on selected columns
     }
 
     while plot_loop:
         for n in [1]:
+            print(f"Clean DataFrame Mode: {clean_dataframe_mode}")
             chart_type = questionary.select(
                 "Select the type of chart to plot",
                 choices= list(supported_plot_types.keys()),
@@ -473,10 +478,47 @@ def interactive_mode():
             if chart_type is None:
                 print("No chart type selected.")
                 break
+            
+            if chart_type == "[Switch Clean DataFrame Mode]":
+                if sim_clean is None:
+                    sim_clean = sim.copy()
+                    columns_to_clean = questionary.checkbox(
+                        "Select numeric columns to clean (change zeros to NaNs and remove outliers):",
+                        choices=list(sim_clean.select_dtypes(include=['number']).columns),
+                        default=None
+                    ).ask()
+                    if len(columns_to_clean) == 0:
+                        print("No numeric columns found to clean.")
+                        break
+                    for col in columns_to_clean:
+                        # Change zeros to NaNs
+                        print(f"Found {len(sim_clean[sim_clean[col] == 0])} zeros in column '{col}'. Changing to NaN.")
+                        sim_clean[col] = sim_clean[col].replace(0, pd.NA)
+
+                        # Remove outliers (values outside 1.5 * IQR)
+                        Q1 = sim_clean[col].quantile(0.25)
+                        Q3 = sim_clean[col].quantile(0.75)
+                        IQR = Q3 - Q1
+                        lower_bound = Q1 - 1.5 * IQR
+                        upper_bound = Q3 + 1.5 * IQR
+                        print(f"Removing outliers in column '{col}' outside of bounds: {lower_bound} - {upper_bound}.")
+                        print(f"Found {len(sim_clean[(sim_clean[col] < lower_bound) | (sim_clean[col] > upper_bound)])} outliers in column '{col}'. Removing outliers.")
+                        sim_clean = sim_clean[(sim_clean[col] >= lower_bound) & (sim_clean[col] <= upper_bound)]
+                if clean_dataframe_mode:
+                    plotting_df = sim_clean.copy()
+                    clean_dataframe_mode = False
+                    print("Switched to original DataFrame.")
+                else:
+                    plotting_df = sim_clean.copy()
+                    clean_dataframe_mode = True
+                    print("Switched to cleaned DataFrame.")
+
+
+
 
             if not supported_plot_types[chart_type]:
                 # Select X-axis
-                options = [col for col in sim.columns]
+                options = [col for col in plotting_df.columns]
                 options.append("None")
                 x_axis = questionary.select(
                     "Select the x-axis variable for the plot",
@@ -488,12 +530,12 @@ def interactive_mode():
                 # Select Y-axis
                 y_axis = questionary.select(
                     "Select the y-axis variable for the plot",
-                    choices= list(sim.select_dtypes(include=['number']).columns)
+                    choices= list(plotting_df.select_dtypes(include=['number']).columns)
                 ).ask()
                 if y_axis is None:
                     print("No y-axis variable selected.")
                     break
-                options = list(sim.select_dtypes(include=['object', 'category']).columns)
+                options = list(plotting_df.select_dtypes(include=['object', 'category']).columns)
                 options.append("None")
 
                 # Select optional hue category
@@ -511,14 +553,14 @@ def interactive_mode():
             try:
                 if chart_type == "Box Plot":
                     spinner.start("Plotting simulation results")
-                    sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                    sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=plotting_df)
                     spinner.succeed()
                     print("(Close the plot window to continue.)")
                     plt.show()
 
                 elif chart_type == "Violin Plot":
                     spinner.start("Plotting simulation results")
-                    sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                    sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=plotting_df)
                     spinner.succeed()
                     print("(Close the plot window to continue.)")
                     plt.show()
@@ -528,11 +570,11 @@ def interactive_mode():
                         spinner.fail("Joint Grid requires both x and y axes to be selected.")
                         break
                     spinner.start("Plotting simulation results")
-                    x_is_cat = is_categorical(sim[x_axis]) if x_axis is not None else False
-                    y_is_cat = is_categorical(sim[y_axis]) if y_axis is not None else False
+                    x_is_cat = is_categorical(plotting_df[x_axis]) if x_axis is not None else False
+                    y_is_cat = is_categorical(plotting_df[y_axis]) if y_axis is not None else False
                     discrete_tuple = (x_is_cat, y_is_cat)
 
-                    g = sns.jointplot(x=x_axis, y=y_axis, data=sim, marginal_ticks=True, kind="hist", discrete=discrete_tuple)
+                    g = sns.jointplot(x=x_axis, y=y_axis, data=plotting_df, marginal_ticks=True, kind="hist", discrete=discrete_tuple)
                     g.plot_joint(sns.histplot, cmap=sns.dark_palette("#69d", reverse=True, as_cmap=True), cbar=True)
                     g.plot_marginals(sns.histplot, element="step")
                     spinner.succeed()
@@ -544,17 +586,17 @@ def interactive_mode():
                     bin_width = 5
                     weight_col = questionary.select(
                         "Select the package weight column:",
-                        choices=list(sim.select_dtypes(include=['number']).columns)
+                        choices=list(plotting_df.select_dtypes(include=['number']).columns)
                     ).ask()
-                    if "Freight" not in sim.columns:
+                    if "Freight" not in plotting_df.columns:
                         spinner.fail("No 'Freight' column found in results.")
                         break
-                    if "Carrier" not in sim.columns:
+                    if "Carrier" not in plotting_df.columns:
                         spinner.fail("No 'Carrier' column found in results.")
                         break
                     spinner.start("Plotting simulation results")
-                    sim["_weight_bin"] = (sim[weight_col] // bin_width) * bin_width
-                    avg_freight = sim.groupby(["_weight_bin", "Carrier"])["Freight"].mean().reset_index()
+                    plotting_df["_weight_bin"] = (plotting_df[weight_col] // bin_width) * bin_width
+                    avg_freight = plotting_df.groupby(["_weight_bin", "Carrier"])["Freight"].mean().reset_index()
                     plt.figure(figsize=(10,6))
                     sns.lineplot(
                         data=avg_freight,
@@ -570,7 +612,7 @@ def interactive_mode():
                     spinner.succeed()
                     print("(Close the plot window to continue.)")
                     plt.show()
-                    sim.drop(columns=["_weight_bin"], inplace=True)
+                    plotting_df.drop(columns=["_weight_bin"], inplace=True)
 
                 
             except Exception as e:
