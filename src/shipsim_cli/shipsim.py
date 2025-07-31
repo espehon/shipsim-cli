@@ -160,7 +160,7 @@ def pick_column(prompt, default_names, columns):
         ).ask()
 
 
-def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
+def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFrame:
     """
     Flexible shipping rate calculator.
     requests: list of dicts or DataFrame, must include 'from_id', 'to_zip', 'pkg_weight'.
@@ -208,17 +208,18 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
     
     # Ask if there is Freight value already in the DataFrame the should be passed through to the output
     og_freight_cols = []
-    if questionary.confirm(
-        "Is there a column with Freight values already in the DataFrame that should be passed through to the output?",
-        default=False
-    ).ask():
-        og_freight_cols = questionary.checkbox(
-        "Select the column with Freight values to pass through:",
-            choices=[col for col in columns if col != from_col and col != to_col and col != weight_col],
-            default=None
-        ).ask()
-        if len(og_freight_cols) > 0:
-            selected_carriers.append(PASS_THROUGH_CARRIER)
+    if interactive and len(columns) > 3:  # More than just from, to, weight
+        if questionary.confirm(
+            "Are there any columns with Freight values already in the DataFrame that should be passed through to the output?",
+            default=False
+        ).ask():
+            og_freight_cols = questionary.checkbox(
+            "Select the columns with Freight values to pass through:",
+                choices=[col for col in columns if col != from_col and col != to_col and col != weight_col],
+                default=None
+            ).ask()
+            if len(og_freight_cols) > 0:
+                selected_carriers.append(PASS_THROUGH_CARRIER)
 
 
 
@@ -332,7 +333,8 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
             if carrier == PASS_THROUGH_CARRIER:
                 # If this is the pass through carrier, just copy the freight value
                 for og_freight_col in og_freight_cols:
-                    result_row.update({
+                    result_row_copy = result_row.copy()  # Copy the row to avoid overwriting
+                    result_row_copy.update({
                         "Carrier": og_freight_col,
                         "Method": "Original Column",
                         "Zone": to_zone,
@@ -340,7 +342,7 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
                         "Accessorial": 0.0,
                         "Addons": 0.0
                     })
-                    output.append(result_row)
+                    output.append(result_row_copy)
             
             else:
                 result_row.update({
@@ -409,7 +411,7 @@ def interactive_mode():
     
     print("\nRunning simulation...")
 
-    sim = shipsim(df)
+    sim = shipsim(df, interactive=True)
 
     if questionary.confirm("Do you want to save the simulation results?",
         default=True
@@ -452,55 +454,80 @@ def interactive_mode():
     plot_loop = questionary.confirm("Do you want to plot the simulation results?",
         default= False
         ).ask()
+    
+    supported_plot_types = {
+        "Box Plot": False,
+        "Violin Plot": False,
+        "Joint Grid": False,
+        "Carrier Comparison (Binned Line)": True # Requires specific columns
+    }
 
     while plot_loop:
         for n in [1]:
-            options = [col for col in sim.columns]
-            options.append("None")
-            x_axis = questionary.select(
-                "Select the x-axis variable for the plot",
-                choices=options
-            ).ask()
-            if x_axis == "None":
-                x_axis = None
-            y_axis = questionary.select(
-                "Select the y-axis variable for the plot",
-                choices= list(sim.select_dtypes(include=['number']).columns)
-            ).ask()
-            if y_axis is None:
-                print("No y-axis variable selected.")
-                break
-            options = list(sim.select_dtypes(include=['object', 'category']).columns)
-            options.append("None")
-            hue_category = questionary.select(
-                "Select the hue category for the plot (Optional)",
-                choices= options,
-                default="None"
-            ).ask()
-            if hue_category == "None":
-                hue_category = None
-
             chart_type = questionary.select(
                 "Select the type of chart to plot",
-                choices=["Box Plot", "Violin Plot", "Joint Grid", "Carrier Comparison (Binned Line)"],
+                choices= list(supported_plot_types.keys()),
                 default="Box Plot"
             ).ask()
+
             if chart_type is None:
                 print("No chart type selected.")
                 break
 
+            if not supported_plot_types[chart_type]:
+                # Select X-axis
+                options = [col for col in sim.columns]
+                options.append("None")
+                x_axis = questionary.select(
+                    "Select the x-axis variable for the plot",
+                    choices=options
+                ).ask()
+                if x_axis == "None":
+                    x_axis = None
+                
+                # Select Y-axis
+                y_axis = questionary.select(
+                    "Select the y-axis variable for the plot",
+                    choices= list(sim.select_dtypes(include=['number']).columns)
+                ).ask()
+                if y_axis is None:
+                    print("No y-axis variable selected.")
+                    break
+                options = list(sim.select_dtypes(include=['object', 'category']).columns)
+                options.append("None")
+
+                # Select optional hue category
+                hue_category = questionary.select(
+                    "Select the hue category for the plot (Optional)",
+                    choices= options,
+                    default="None"
+                ).ask()
+                if hue_category == "None":
+                    hue_category = None
+
+            
+            
+
             try:
-                spinner.start("Plotting simulation results")
                 if chart_type == "Box Plot":
+                    spinner.start("Plotting simulation results")
                     sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                    spinner.succeed()
+                    print("(Close the plot window to continue.)")
+                    plt.show()
 
                 elif chart_type == "Violin Plot":
+                    spinner.start("Plotting simulation results")
                     sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=sim)
+                    spinner.succeed()
+                    print("(Close the plot window to continue.)")
+                    plt.show()
 
                 elif chart_type == "Joint Grid":
                     if x_axis is None or y_axis is None:
                         spinner.fail("Joint Grid requires both x and y axes to be selected.")
                         break
+                    spinner.start("Plotting simulation results")
                     x_is_cat = is_categorical(sim[x_axis]) if x_axis is not None else False
                     y_is_cat = is_categorical(sim[y_axis]) if y_axis is not None else False
                     discrete_tuple = (x_is_cat, y_is_cat)
@@ -508,6 +535,9 @@ def interactive_mode():
                     g = sns.jointplot(x=x_axis, y=y_axis, data=sim, marginal_ticks=True, kind="hist", discrete=discrete_tuple)
                     g.plot_joint(sns.histplot, cmap=sns.dark_palette("#69d", reverse=True, as_cmap=True), cbar=True)
                     g.plot_marginals(sns.histplot, element="step")
+                    spinner.succeed()
+                    print("(Close the plot window to continue.)")
+                    plt.show()
                     
                 elif chart_type == "Carrier Comparison (Binned Line)":
                     # Binned line plot: x=weight (binned), y=avg freight, hue=carrier
@@ -522,7 +552,7 @@ def interactive_mode():
                     if "Carrier" not in sim.columns:
                         spinner.fail("No 'Carrier' column found in results.")
                         break
-
+                    spinner.start("Plotting simulation results")
                     sim["_weight_bin"] = (sim[weight_col] // bin_width) * bin_width
                     avg_freight = sim.groupby(["_weight_bin", "Carrier"])["Freight"].mean().reset_index()
                     plt.figure(figsize=(10,6))
@@ -542,9 +572,7 @@ def interactive_mode():
                     plt.show()
                     sim.drop(columns=["_weight_bin"], inplace=True)
 
-                spinner.succeed()
-                print("(Close the plot window to continue.)")
-                plt.show()
+                
             except Exception as e:
                 spinner.fail(f"Error :(")
                 print(f"Error plotting results: {e}")
