@@ -463,9 +463,6 @@ def interactive_mode():
             ).ask()
             if x_axis == "None":
                 x_axis = None
-            # if x_axis is None:
-            #     print("No x-axis variable selected.")
-            #     break
             y_axis = questionary.select(
                 "Select the y-axis variable for the plot",
                 choices= list(sim.select_dtypes(include=['number']).columns)
@@ -485,7 +482,7 @@ def interactive_mode():
 
             chart_type = questionary.select(
                 "Select the type of chart to plot",
-                choices=["Box Plot", "Violin Plot", "Joint Grid"],
+                choices=["Box Plot", "Violin Plot", "Joint Grid", "Carrier Comparison (Binned Line)"],
                 default="Box Plot"
             ).ask()
             if chart_type is None:
@@ -511,6 +508,39 @@ def interactive_mode():
                     g = sns.jointplot(x=x_axis, y=y_axis, data=sim, marginal_ticks=True, kind="hist", discrete=discrete_tuple)
                     g.plot_joint(sns.histplot, cmap=sns.dark_palette("#69d", reverse=True, as_cmap=True), cbar=True)
                     g.plot_marginals(sns.histplot, element="step")
+                    
+                elif chart_type == "Carrier Comparison (Binned Line)":
+                    # Binned line plot: x=weight (binned), y=avg freight, hue=carrier
+                    bin_width = 5
+                    weight_col = questionary.select(
+                        "Select the package weight column:",
+                        choices=list(sim.select_dtypes(include=['number']).columns)
+                    ).ask()
+                    if "Freight" not in sim.columns:
+                        spinner.fail("No 'Freight' column found in results.")
+                        break
+                    if "Carrier" not in sim.columns:
+                        spinner.fail("No 'Carrier' column found in results.")
+                        break
+
+                    sim["_weight_bin"] = (sim[weight_col] // bin_width) * bin_width
+                    avg_freight = sim.groupby(["_weight_bin", "Carrier"])["Freight"].mean().reset_index()
+                    plt.figure(figsize=(10,6))
+                    sns.lineplot(
+                        data=avg_freight,
+                        x="_weight_bin",
+                        y="Freight",
+                        hue="Carrier",
+                        marker="o"
+                    )
+                    plt.xlabel(f"Package Weight (binned every {bin_width} units)")
+                    plt.ylabel("Average Freight")
+                    plt.title("Average Freight by Carrier and Weight Bin")
+                    plt.legend(title="Carrier")
+                    spinner.succeed()
+                    print("(Close the plot window to continue.)")
+                    plt.show()
+                    sim.drop(columns=["_weight_bin"], inplace=True)
 
                 spinner.succeed()
                 print("(Close the plot window to continue.)")
