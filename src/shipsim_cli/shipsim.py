@@ -176,7 +176,7 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
         df_in = requests.copy()
 
     columns = list(df_in.columns)
-    PASS_THROUGH_CARRIER = "PASS_THROUGH_CARRIER"
+    PASS_THROUGH_CARRIER = "PASS.THROUGH.CARRIER"
 
     from_col = pick_column("Origin ID (from_id)", ["from_id", "fromid", "origin", "origin_id"], columns)
     if from_col is None:
@@ -209,24 +209,18 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
         selected_carriers = carriers
     
     # Ask if there is Freight value already in the DataFrame the should be passed through to the output
-    og_freight_col = None
+    og_freight_cols = []
     if questionary.confirm(
         "Is there a column with Freight values already in the DataFrame that should be passed through to the output?",
         default=False
     ).ask():
-        og_freight_col = questionary.select(
-            "Select the column with Freight values to pass through:",
+        og_freight_cols = questionary.checkbox(
+        "Select the column with Freight values to pass through:",
             choices=[col for col in columns if col != from_col and col != to_col and col != weight_col],
             default=None
         ).ask()
-        if og_freight_col is not None:
-            pass_through_name = questionary.text(
-                "Enter a name for the category that will represent the pass though Freight:",
-                default="Original Freight",
-                validate=lambda x: len(str(x).strip()) > 0,
-            ).ask()
-            if pass_through_name is not None and pass_through_name.strip() != '':
-                selected_carriers.append(PASS_THROUGH_CARRIER)
+        if len(og_freight_cols) > 0:
+            selected_carriers.append(PASS_THROUGH_CARRIER)
 
 
 
@@ -339,13 +333,15 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
             result_row = row_in.to_dict()  # Copy all user columns
             if carrier == PASS_THROUGH_CARRIER:
                 # If this is the pass through carrier, just copy the freight value
-                result_row.update({
-                    "Carrier": pass_through_name,
-                    "Method": "Source File",
-                    "Freight": row_in[og_freight_col] if og_freight_col else None,
-                    "Accessorial": 0.0,
-                    "Addons": 0.0
-                })
+                for og_freight_col in og_freight_cols:
+                    result_row.update({
+                        "Carrier": og_freight_col,
+                        "Method": "Original Column",
+                        "Freight": row_in[og_freight_col] if og_freight_col else None,
+                        "Accessorial": 0.0,
+                        "Addons": 0.0
+                    })
+                    output.append(result_row)
             
             else:
                 result_row.update({
@@ -355,7 +351,7 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
                     "Accessorial": accessorial_value,
                     "Addons": addons
                 })
-            output.append(result_row)
+                output.append(result_row)
 
     output_df = pd.DataFrame(output)
     output_df = output_df.sort_values(by=[from_col, "Carrier", to_col, weight_col]).reset_index(drop=True)
