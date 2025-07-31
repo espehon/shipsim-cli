@@ -194,8 +194,6 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
     # Ask user to select carriers
     carriers = get_carriers()
     if not carriers:
-        print("No carriers found in the carriers folder.")
-        print("Try 'shipsim --folder' for more info.")
         sys.exit(0)
     if len(carriers) == 1:
         selected_carriers = carriers
@@ -337,6 +335,7 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
                     result_row.update({
                         "Carrier": og_freight_col,
                         "Method": "Original Column",
+                        "Zone": to_zone,
                         "Freight": row_in[og_freight_col] if og_freight_col else None,
                         "Accessorial": 0.0,
                         "Addons": 0.0
@@ -347,6 +346,7 @@ def shipsim(requests: list | pd.DataFrame) -> pd.DataFrame:
                 result_row.update({
                     "Carrier": carrier,
                     "Method": method,
+                    "Zone": to_zone,
                     "Freight": freight,
                     "Accessorial": accessorial_value,
                     "Addons": addons
