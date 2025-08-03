@@ -457,12 +457,14 @@ def interactive_mode():
     
     clean_dataframe_mode = False
     sim_clean = None
+    plotting_df = sim.copy()
     
     supported_plot_types = {
         "Box Plot": False,
         "Violin Plot": False,
         "Joint Grid": False,
         "Carrier Comparison (Binned Line)": True, # Requires specific columns
+        "Carrier Comparison (Binned Box)": True, # Requires specific columns
         "[Switch Clean DataFrame Mode]": None # Change Zeros to NaNs and remove outliers on selected columns
     }
 
@@ -505,7 +507,7 @@ def interactive_mode():
                         print(f"Found {len(sim_clean[(sim_clean[col] < lower_bound) | (sim_clean[col] > upper_bound)])} outliers in column '{col}'. Removing outliers.")
                         sim_clean = sim_clean[(sim_clean[col] >= lower_bound) & (sim_clean[col] <= upper_bound)]
                 if clean_dataframe_mode:
-                    plotting_df = sim_clean.copy()
+                    plotting_df = sim.copy()
                     clean_dataframe_mode = False
                     print("Switched to original DataFrame.")
                 else:
@@ -530,12 +532,12 @@ def interactive_mode():
                 # Select Y-axis
                 y_axis = questionary.select(
                     "Select the y-axis variable for the plot",
-                    choices= list(plotting_df.select_dtypes(include=['number']).columns)
+                    choices= [col for col in plotting_df.columns]
                 ).ask()
                 if y_axis is None:
                     print("No y-axis variable selected.")
                     break
-                options = list(plotting_df.select_dtypes(include=['object', 'category']).columns)
+                options = [col for col in plotting_df.columns]
                 options.append("None")
 
                 # Select optional hue category
@@ -586,7 +588,7 @@ def interactive_mode():
                     bin_width = 5
                     weight_col = questionary.select(
                         "Select the package weight column:",
-                        choices=list(plotting_df.select_dtypes(include=['number']).columns)
+                        choices=[col for col in plotting_df.columns]
                     ).ask()
                     if "Freight" not in plotting_df.columns:
                         spinner.fail("No 'Freight' column found in results.")
@@ -613,6 +615,39 @@ def interactive_mode():
                     print("(Close the plot window to continue.)")
                     plt.show()
                     plotting_df.drop(columns=["_weight_bin"], inplace=True)
+                
+                elif chart_type == "Carrier Comparison (Binned Box)":
+                    # Binned box plot: x=weight (binned), y=avg freight, hue=carrier
+                    bin_width = 10
+                    weight_col = questionary.select(
+                        "Select the package weight column:",
+                        choices=[col for col in plotting_df.columns]
+                    ).ask()
+                    if "Freight" not in plotting_df.columns:
+                        spinner.fail("No 'Freight' column found in results.")
+                        break
+                    if "Carrier" not in plotting_df.columns:
+                        spinner.fail("No 'Carrier' column found in results.")
+                        break
+                    spinner.start("Plotting simulation results")
+                    plotting_df["_weight_bin"] = (plotting_df[weight_col] // bin_width) * bin_width
+                    # avg_freight = plotting_df.groupby(["_weight_bin", "Carrier"])["Freight"].mean().reset_index()
+                    plt.figure(figsize=(10,6))
+                    sns.boxplot(
+                        data=plotting_df,
+                        x='_weight_bin',
+                        y='Freight',
+                        hue='Carrier'
+                    )
+                    plt.xlabel(f"Package Weight (binned every {bin_width} units)")
+                    plt.ylabel("Average Freight")
+                    plt.title("Average Freight by Carrier and Weight Bin")
+                    plt.legend(title="Carrier")
+                    spinner.succeed()
+                    print("(Close the plot window to continue.)")
+                    plt.show()
+                    plotting_df.drop(columns=["_weight_bin"], inplace=True)
+
 
                 
             except Exception as e:
