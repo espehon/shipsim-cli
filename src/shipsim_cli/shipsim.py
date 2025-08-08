@@ -335,6 +335,7 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
                 for og_freight_col in og_freight_cols:
                     result_row_copy = result_row.copy()  # Copy the row to avoid overwriting
                     result_row_copy.update({
+                        "Region": to_zip[0],
                         "Carrier": og_freight_col,
                         "Method": "Original Column",
                         "Zone": to_zone,
@@ -346,6 +347,7 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
             
             else:
                 result_row.update({
+                    "Region": to_zip[0],
                     "Carrier": carrier,
                     "Method": method,
                     "Zone": to_zone,
@@ -358,6 +360,48 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
     output_df = pd.DataFrame(output)
     output_df = output_df.sort_values(by=[from_col, "Carrier", to_col, weight_col]).reset_index(drop=True)
     return output_df
+
+
+def set_color_palette(df, col) -> str:
+    "determine if the column is better represented as categorical or numerical"
+    num_uniques = df[col].nunique()
+    if num_uniques > 6:
+        return "numerical"
+    else:
+        return "categorical"
+
+
+def select_axises(df) -> tuple:
+    # Select X-axis
+    options = [col for col in df.columns]
+    options.append("None")
+    x_axis = questionary.select(
+        "Select the x-axis variable for the plot",
+        choices=options
+    ).ask()
+    if x_axis == "None":
+        x_axis = None
+    
+    # Select Y-axis
+    y_axis = questionary.select(
+        "Select the y-axis variable for the plot",
+        choices= [col for col in df.columns]
+    ).ask()
+    if y_axis is None:
+        print("No y-axis variable selected.")
+        return None, None, None
+    options = [col for col in df.columns]
+    options.append("None")
+
+    # Select optional hue category
+    hue_category = questionary.select(
+        "Select the hue category for the plot (Optional)",
+        choices= options,
+        default="None"
+    ).ask()
+    if hue_category == "None":
+        hue_category = None
+    return x_axis, y_axis, hue_category
 
 
 def interactive_mode():
@@ -459,21 +503,21 @@ def interactive_mode():
     sim_clean = None
     plotting_df = sim.copy()
     
-    supported_plot_types = {
-        "Box Plot": False,
-        "Violin Plot": False,
-        "Joint Grid": False,
-        "Carrier Comparison (Binned Line)": True, # Requires specific columns
-        "Carrier Comparison (Binned Box)": True, # Requires specific columns
-        "[Switch Clean DataFrame Mode]": None # Change Zeros to NaNs and remove outliers on selected columns
-    }
+    supported_plot_types = [
+        "Box Plot",
+        "Violin Plot",
+        "Joint Gride",
+        "Carrier Comparison (Binned Line)",
+        "Carrier Comparison (Binned Box)",
+        "[Switch Clean DataFrame Mode]"
+    ]
 
     while plot_loop:
         for n in [1]:
             print(f"Clean DataFrame Mode: {clean_dataframe_mode}")
             chart_type = questionary.select(
                 "Select the type of chart to plot",
-                choices= list(supported_plot_types.keys()),
+                choices= list(supported_plot_types),
                 default="Box Plot"
             ).ask()
 
@@ -518,42 +562,21 @@ def interactive_mode():
 
 
 
-            if not supported_plot_types[chart_type]:
-                # Select X-axis
-                options = [col for col in plotting_df.columns]
-                options.append("None")
-                x_axis = questionary.select(
-                    "Select the x-axis variable for the plot",
-                    choices=options
-                ).ask()
-                if x_axis == "None":
-                    x_axis = None
-                
-                # Select Y-axis
-                y_axis = questionary.select(
-                    "Select the y-axis variable for the plot",
-                    choices= [col for col in plotting_df.columns]
-                ).ask()
-                if y_axis is None:
-                    print("No y-axis variable selected.")
-                    break
-                options = [col for col in plotting_df.columns]
-                options.append("None")
-
-                # Select optional hue category
-                hue_category = questionary.select(
-                    "Select the hue category for the plot (Optional)",
-                    choices= options,
-                    default="None"
-                ).ask()
-                if hue_category == "None":
-                    hue_category = None
+            
 
             
             
 
             try:
                 if chart_type == "Box Plot":
+                    x_axis, y_axis, hue_category = select_axises(plotting_df)
+                    if y_axis is None:
+                        break
+                    if hue_category:
+                        if set_color_palette(plotting_df, hue_category) == "numeric":
+                            sns.color_palette("Spectral", as_cmap=True)
+                        else:
+                            sns.color_palette(palette='Set2')
                     spinner.start("Plotting simulation results")
                     sns.boxplot(x=x_axis, y=y_axis, hue=hue_category, data=plotting_df)
                     spinner.succeed()
@@ -561,6 +584,14 @@ def interactive_mode():
                     plt.show()
 
                 elif chart_type == "Violin Plot":
+                    x_axis, y_axis, hue_category = select_axises(plotting_df)
+                    if y_axis is None:
+                        break
+                    if hue_category:
+                        if set_color_palette(plotting_df, hue_category) == "numeric":
+                            sns.color_palette("Spectral", as_cmap=True)
+                        else:
+                            sns.color_palette(palette='Set2')
                     spinner.start("Plotting simulation results")
                     sns.violinplot(x=x_axis, y=y_axis, hue=hue_category, data=plotting_df)
                     spinner.succeed()
@@ -568,8 +599,9 @@ def interactive_mode():
                     plt.show()
 
                 elif chart_type == "Joint Grid":
+                    x_axis, y_axis, hue_category = select_axises(plotting_df)
                     if x_axis is None or y_axis is None:
-                        spinner.fail("Joint Grid requires both x and y axes to be selected.")
+                        print("Joint Grid requires both x and y axes to be selected.")
                         break
                     spinner.start("Plotting simulation results")
                     x_is_cat = is_categorical(plotting_df[x_axis]) if x_axis is not None else False
@@ -596,6 +628,11 @@ def interactive_mode():
                     if "Carrier" not in plotting_df.columns:
                         spinner.fail("No 'Carrier' column found in results.")
                         break
+                    if hue_category:
+                        if set_color_palette(plotting_df, 'Carrier') == "numeric":
+                            sns.color_palette("Spectral", as_cmap=True)
+                        else:
+                            sns.color_palette(palette='Set2')
                     spinner.start("Plotting simulation results")
                     plotting_df["_weight_bin"] = (plotting_df[weight_col] // bin_width) * bin_width
                     avg_freight = plotting_df.groupby(["_weight_bin", "Carrier"])["Freight"].mean().reset_index()
