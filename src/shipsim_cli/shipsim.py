@@ -362,6 +362,8 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
     output_df = pd.DataFrame(output)
     if len(output) < 1:
         return output_df
+    output_df["Freight"] = pd.to_numeric(output_df["Freight"], errors="coerce")
+
     output_df = output_df.sort_values(by=[from_col, "Carrier", to_col, weight_col]).reset_index(drop=True)
     return output_df
 
