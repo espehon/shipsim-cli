@@ -190,6 +190,8 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
     if weight_col is None:
         print("No column selected. Exiting.")
         sys.exit(0)
+    
+    df_in[weight_col] = df_in[weight_col].astype(float)
 
     # Ask user to select carriers
     carriers = get_carriers()
@@ -356,8 +358,10 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
                     "Addons": addons
                 })
                 output.append(result_row)
-
+        
     output_df = pd.DataFrame(output)
+    if len(output) < 1:
+        return output_df
     output_df = output_df.sort_values(by=[from_col, "Carrier", to_col, weight_col]).reset_index(drop=True)
     return output_df
 
@@ -438,9 +442,9 @@ def interactive_mode():
 
     spinner.start()
     if input_file.endswith('.csv'):
-        df = pd.read_csv(input_file)
+        df = pd.read_csv(input_file, dtype=str)
     elif input_file.endswith('.xlsx'):
-        df = pd.read_excel(input_file)
+        df = pd.read_excel(input_file, dtype=str)
     spinner.succeed()
 
     print(df.dtypes)
@@ -562,10 +566,6 @@ def interactive_mode():
 
 
 
-            
-
-            
-            
 
             try:
                 if chart_type == "Box Plot":
