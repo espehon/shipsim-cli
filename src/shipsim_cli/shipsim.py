@@ -512,7 +512,7 @@ def interactive_mode():
     supported_plot_types = [
         "Box Plot",
         "Violin Plot",
-        "Joint Gride",
+        "Joint Grid",
         "Carrier Comparison (Binned Line)",
         "Carrier Comparison (Binned Box)",
         "[Switch Clean DataFrame Mode]"
