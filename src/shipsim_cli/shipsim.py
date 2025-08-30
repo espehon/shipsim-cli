@@ -10,10 +10,12 @@ import os
 import argparse
 import json
 import importlib.metadata
+from typing import Tuple
 
 
 import pandas as pd
 import questionary
+from halo import Halo
 
 
 
@@ -57,6 +59,8 @@ USAGE_STR = "Usage: shipsim <FromID> <ToZip> <PkgWeight1> [<PkgWeight2> ...]    
 
 EXCEL_ROW_LIMIT = 1_048_575
 
+spinner = Halo(text='Pocessing...', spinner='dots')
+
 # Set Argparse
 parser = argparse.ArgumentParser(
     description="shipsim-cli: TODO.",
@@ -96,7 +100,7 @@ def folder_sys_help():
             └── RateCard.csv
 
 Exqample ZoneMap.csv:
-    Origin,ShipToZip3,Standard,Express
+    Origin,ShipToZip,Standard,Express
     1,100,1,11
     1,200,2,12
     2,100,2,12
@@ -160,7 +164,7 @@ def pick_column(prompt, default_names, columns):
         ).ask()
 
 
-def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFrame:
+def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Flexible shipping rate calculator.
     requests: list of dicts or DataFrame, must include 'from_id', 'to_zip', 'pkg_weight'.
@@ -212,11 +216,11 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
     og_freight_cols = []
     if interactive and len(columns) > 3:  # More than just from, to, weight
         if questionary.confirm(
-            "Are there any columns with Freight values already in the DataFrame that should be passed through to the output?",
+            "Are there any Freight values in the DataFrame that should be passed through to the output?",
             default=False
         ).ask():
             og_freight_cols = questionary.checkbox(
-            "Select the columns with Freight values to pass through:",
+            "Select the columns with Freight values to pass through:\n",
                 choices=[col for col in columns if col != from_col and col != to_col and col != weight_col],
                 default=None
             ).ask()
@@ -282,90 +286,132 @@ def shipsim(requests: list | pd.DataFrame, interactive: bool=False) -> pd.DataFr
             else:
                 method = shipping_methods[0]
             carrier_methods[carrier] = method
-    output = []
-    for idx, row_in in df_in.iterrows():
-        from_id = row_in[from_col]
-        to_zip = row_in[to_col]
-        pkg = row_in[weight_col]
-        for carrier in selected_carriers:
-            if carrier != PASS_THROUGH_CARRIER:
-                zones_map = carrier_zonemaps[carrier]
-                rate_card = carrier_ratecards[carrier]
-                method = carrier_methods[carrier]
-                accessorial = carrier_accessorials[carrier]
+    
+    # Iterate through each row in input data and calculate rates
+    try:
+        spinner.start("Running simulation...")
+        output = []
+        error_list = []
+        total_rows = len(df_in) * len(selected_carriers)
+        sim_stats = {
+            "successes": 0,
+            "no_zip_match": 0,
+            "no_zone_match": 0,
+            "no_rate_found": 0,
+            "over_max_weight": 0
+        }
+        for idx, row_in in df_in.iterrows():
+            total_errors = (sim_stats['no_rate_found'] + sim_stats['no_zone_match'] + sim_stats['no_zip_match'] + sim_stats['over_max_weight'])
+            spinner.text = f"Successes: {sim_stats['successes']:,}/{total_rows:,} ({(sim_stats['successes']/total_rows)*100:.2f}%) | Errors: {total_errors:,} ({(total_errors/total_rows)*100:.2f}%) -> ZipErr: {sim_stats['no_zip_match']:,}  ZoneErr: {sim_stats['no_zone_match']:,}  WghtErr: {sim_stats['over_max_weight']:,}  RateErr: {sim_stats['no_rate_found']:,}"
+            from_id = row_in[from_col]
+            to_zip = row_in[to_col]
+            pkg = row_in[weight_col]
+            for carrier in selected_carriers:
+                if carrier != PASS_THROUGH_CARRIER:
+                    zones_map = carrier_zonemaps[carrier]
+                    rate_card = carrier_ratecards[carrier]
+                    method = carrier_methods[carrier]
+                    accessorial = carrier_accessorials[carrier]
 
-                # --- Zone/method/rate lookup ---
-                match = zones_map.loc[
-                    (zones_map['Origin'] == str(from_id)) &
-                    (zones_map['ShipToZip3'] == str(to_zip)[:3])
-                ]
-                if match.empty or pd.isna(match.iloc[0][method]):
-                    print(f"Origin ID {from_id} with ShipToZip3 {str(to_zip)[:3]} not found for {method} in {carrier}'s ZoneMap.")
-                    continue
-                to_zone = match.iloc[0][method]
+                    # --- Zone/method/rate lookup ---
+                    matched = zones_map.loc[
+                        (zones_map['Origin'] == str(from_id)) &
+                        (zones_map['ShipToZip'] == str(to_zip))
+                    ]
+                    if matched.empty or pd.isna(matched.iloc[0][method]):
+                        matched = zones_map.loc[
+                            (zones_map['Origin'] == str(from_id)) &
+                            (zones_map['ShipToZip'].str.startswith(str(to_zip)[:3]))
+                        ]
+                        if matched.empty or pd.isna(matched.iloc[0][method]):
+                            sim_stats["no_zip_match"] += 1
+                            error_row = row_in.to_dict()
+                            error_row['shipsim_error'] = "no_zip_match"
+                            error_list.append(error_row)
+                            continue
+                    to_zone = matched.iloc[0][method]
 
-                weights = rate_card['Weight'].values
-                larger_weights = weights[weights >= float(pkg)]
-                if larger_weights.size == 0:
-                    print(f"No rate found for {pkg} lbs (over max weight) from zone {to_zone} in {carrier} ({method}).")
-                    continue
-                selected_weight = larger_weights.min()
-                row = rate_card[rate_card['Weight'] == selected_weight]
-                if row.empty or to_zone not in row.columns:
-                    print(f"No rate found for zone {to_zone} at weight {selected_weight} in {carrier} ({method}).")
-                    continue
-                freight = float(row[to_zone].values[0])
+                    weights = rate_card['Weight'].values
+                    larger_weights = weights[weights >= float(pkg)]
+                    if larger_weights.size == 0:
+                        sim_stats["over_max_weight"] += 1
+                        error_row = row_in.to_dict()
+                        error_row['shipsim_error'] = "over_max_weight"
+                        error_list.append(error_row)
+                        continue
+                    selected_weight = larger_weights.min()
+                    row = rate_card[rate_card['Weight'] == selected_weight]
+                    if row.empty or to_zone not in row.columns:
+                        sim_stats["no_zone_match"] += 1
+                        error_row = row_in.to_dict()
+                        error_row['shipsim_error'] = "no_zone_match"
+                        error_list.append(error_row)
+                        continue
+                    freight = float(row[to_zone].values[0])
+                    if freight is None or freight is pd.NA or freight == 0:
+                        sim_stats["no_rate_found"] += 1
+                        error_row = row_in.to_dict()
+                        error_row['shipsim_error'] = "no_rate_found"
+                        error_list.append(error_row)
+                        continue
 
-                # --- Accessorial calculation ---
-                if accessorial is not None:
-                    accessorial_value = freight * accessorial
-                    freight += accessorial_value
-                else:
-                    accessorial_value = 0.0
+                    # --- Accessorial calculation ---
+                    if accessorial is not None:
+                        accessorial_value = freight * accessorial
+                        freight += accessorial_value
+                    else:
+                        accessorial_value = 0.0
+                    
+                    # --- Addons ---
+                    if addons is not None:
+                        freight += addons
+                    else:
+                        addons = 0.0
+
+                result_row = row_in.to_dict()  # Copy all user columns
+                if carrier == PASS_THROUGH_CARRIER:
+                    # If this is the pass through carrier, just copy the freight value
+                    for og_freight_col in og_freight_cols:
+                        result_row_copy = result_row.copy()  # Copy the row to avoid overwriting
+                        result_row_copy.update({
+                            "Region": to_zip[0],
+                            "Carrier": og_freight_col,
+                            "Method": "Original Column",
+                            "Zone": to_zone,
+                            "Freight": row_in[og_freight_col] if og_freight_col else None,
+                            "Accessorial": 0.0,
+                            "Addons": 0.0
+                        })
+                        output.append(result_row_copy)
                 
-                # --- Addons ---
-                if addons is not None:
-                    freight += addons
                 else:
-                    addons = 0.0
-            
-            
-
-            result_row = row_in.to_dict()  # Copy all user columns
-            if carrier == PASS_THROUGH_CARRIER:
-                # If this is the pass through carrier, just copy the freight value
-                for og_freight_col in og_freight_cols:
-                    result_row_copy = result_row.copy()  # Copy the row to avoid overwriting
-                    result_row_copy.update({
+                    result_row.update({
                         "Region": to_zip[0],
-                        "Carrier": og_freight_col,
-                        "Method": "Original Column",
+                        "Carrier": carrier,
+                        "Method": method,
                         "Zone": to_zone,
-                        "Freight": row_in[og_freight_col] if og_freight_col else None,
-                        "Accessorial": 0.0,
-                        "Addons": 0.0
+                        "Freight": freight,
+                        "Accessorial": accessorial_value,
+                        "Addons": addons
                     })
-                    output.append(result_row_copy)
-            
-            else:
-                result_row.update({
-                    "Region": to_zip[0],
-                    "Carrier": carrier,
-                    "Method": method,
-                    "Zone": to_zone,
-                    "Freight": freight,
-                    "Accessorial": accessorial_value,
-                    "Addons": addons
-                })
-                output.append(result_row)
-        
+                    output.append(result_row)
+                sim_stats["successes"] += 1
+
+        spinner.succeed(f"Successes: {sim_stats['successes']:,}/{total_rows:,} ({(sim_stats['successes']/total_rows)*100:.2f}%) | Errors: {total_errors:,} ({(total_errors/total_rows)*100:.2f}%) -> ZipErr: {sim_stats['no_zip_match']:,}  ZoneErr: {sim_stats['no_zone_match']:,}  WghtErr: {sim_stats['over_max_weight']:,}  RateErr: {sim_stats['no_rate_found']:,}")
+    except KeyboardInterrupt:
+        spinner.fail("Simulation cancelled by user.")
+    except Exception as e:
+        spinner.fail(f"Error during simulation: {e}")
+        sys.exit(1)
+
     output_df = pd.DataFrame(output)
+    error_df = pd.DataFrame(error_list)
     if len(output) < 1:
-        return output_df
+        return output_df, error_df
     output_df["Freight"] = pd.to_numeric(output_df["Freight"], errors="coerce")
 
     output_df = output_df.sort_values(by=[from_col, "Carrier", to_col, weight_col]).reset_index(drop=True)
-    return output_df
+    return output_df, error_df
 
 
 def set_color_palette(df, col) -> str:
@@ -420,9 +466,6 @@ def interactive_mode():
     import matplotlib.pyplot as plt
 
     import seaborn as sns
-    from halo import Halo
-
-    spinner = Halo(text='Loading data', spinner='dots')
 
     # get list of xlsx files in the current directory
     available_files = [f for f in os.listdir('.') if f.endswith('.csv') or f.endswith('.xlsx')]
@@ -461,8 +504,9 @@ def interactive_mode():
     
     print("\nRunning simulation...")
 
-    sim = shipsim(df, interactive=True)
+    sim, errors = shipsim(df, interactive=True)
 
+    # Save output
     if questionary.confirm("Do you want to save the simulation results?",
         default=True
         ).ask():
@@ -485,7 +529,6 @@ def interactive_mode():
                 choices=["CSV", "Excel"],
             ).ask()
 
-    
         if extension == "CSV":
             output_file += '.csv'
         elif extension == "Excel":
@@ -501,8 +544,48 @@ def interactive_mode():
             sim.to_excel(output_file, index=False)
         spinner.succeed()
 
+    # Save errors if any
+    if len(errors) > 0:
+        if questionary.confirm(f"{len(errors)} errors were found. Do you want to save them to file?",
+        default=True
+        ).ask():
+            error_file = questionary.text(
+                "Enter the output file name (without extension):",
+                default= f"{input_file.split('.')[0]}_out_errors"
+            ).ask()
+
+            if error_file is None or error_file.strip() == '':
+                print("No output file name provided. Exiting.")
+                sys.exit(0)
+            
+            if len(errors) > EXCEL_ROW_LIMIT:
+                print(f"Warning: The errors DataFrame has {len(errors)} rows, which exceeds the Excel row limit of {EXCEL_ROW_LIMIT}.")
+                print("Saving as CSV.")
+                extension = "CSV"
+            else:
+                extension = questionary.select(
+                    "Select the output file format",
+                    choices=["CSV", "Excel"],
+                ).ask()
+
+        
+            if extension == "CSV":
+                error_file += '.csv'
+            elif extension == "Excel":
+                error_file += '.xlsx'
+            else:
+                print("Invalid file format selected. Exiting.")
+                sys.exit(1)
+
+            spinner.start("Saving simulation results")
+            if extension == "CSV":
+                errors.to_csv(error_file, index=False)
+            elif extension == "Excel":
+                errors.to_excel(error_file, index=False)
+            spinner.succeed()
+
     plot_loop = questionary.confirm("Do you want to plot the simulation results?",
-        default= False
+        default= True
         ).ask()
     
     clean_dataframe_mode = False
@@ -723,12 +806,12 @@ def cli(argv=None):
         payload =[]
         for package in packages:
             payload.append((args.shipment_info[0], args.shipment_info[1], float(package)))
-        df = shipsim(payload)
+        df, errors = shipsim(payload)
         print(df.head(10))
 
         if len(df) == 0:
             print("No rates found for the given shipment information.")
-            sys.exit(0)
+
         elif len(df) > 10:
             user = questionary.confirm(
                 "More than 10 results found. Do you want to save to CSV? (Y/n)",
@@ -741,7 +824,28 @@ def cli(argv=None):
                 ).ask()
                 df.to_csv(os.path.expanduser(file_path + ".csv"), index=False)
                 print(f"\n√ Results saved to {file_path}.csv\n")
-    
+        if len(errors) > 0:
+            user = questionary.select(
+                f"{len(errors)} errors found during simulation. What do you want to do?",
+                choices=[
+                    "View errors",
+                    "Save errors to CSV",
+                    "Ignore errors"
+                ]
+            ).ask()
+            if user == "View errors":
+                print(errors.head(10))
+                if len(errors) > 10:
+                    print(f"... and {len(errors) - 10} more.")
+            elif user == "Save errors to CSV":
+                file_path = questionary.text(
+                    "Enter filename to save errors (without extension):",
+                    default="~/Downloads/shipsim_errors"
+                ).ask()
+                errors.to_csv(os.path.expanduser(file_path + ".csv"), index=False)
+                print(f"\n√ Errors saved to {file_path}.csv\n")
+            else:
+                print("Errors ignored.")
 
 
 
